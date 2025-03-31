@@ -33,7 +33,9 @@ class CompanyMention(BaseModel):
     )
 
 class ExtractionResponse(BaseModel):
-    companies: List[CompanyMention]
+    companies: List[CompanyMention] = Field(
+        description="List of company mentions with their identifiers"
+    )
 
 class VerifiedCompany(BaseModel):
     MasterId: str
@@ -107,17 +109,32 @@ Finished: {datetime.fromtimestamp(self.end_time).strftime('%Y-%m-%d %H:%M:%S')}
 
 # Optimized prompt templates
 EXTRACTION_SYSTEM_PROMPT = """You are an expert entity extraction assistant. Extract company mentions from text.
-For each company mention, return:
+For each company mention, return ONLY:
 1. The exact Word found in the text
-2. ONLY the top 2 identifiers that you are most confident about (confidence must be "high" or "very_high")
-3. Do NOT include any identifiers with "none" or "low" confidence
-4. Skip any identifier you're not confident about
+2. The single most confident identifier as 'top_identifier', including:
+   - type: The type of identifier (RIC, BBTicker, SEDOL, ISIN, or Symbol)
+   - value: The identifier value
+   - confidence: ONLY "high" or "very_high"
+3. IssueName if available
 
-Each identifier should have:
-- value: The actual identifier value
-- confidence: ONLY "high" or "very_high"
-
-Prioritize recall over precision, but only include identifiers you're very confident about."""
+The response MUST be a valid JSON object with this exact structure:
+{{
+  "companies": [
+    {{
+      "Word": "Example Corp",
+      "top_identifier": {{
+        "type": "RIC",
+        "value": "EXMP.O",
+        "confidence": "very_high"
+      }},
+      "IssueName": {{
+        "type": "IssueName",
+        "value": "Example Corporation",
+        "confidence": "high"
+      }}
+    }}
+  ]
+}}"""
 
 EXTRACTION_HUMAN_PROMPT = """Extract company mentions from this text:
 {article_text}"""
@@ -150,11 +167,37 @@ def extract_companies_from_text(article_text: str, llm: OpenAI) -> List[dict]:
         messages = [
             {
                 "role": "system", 
-                "content": f"{EXTRACTION_SYSTEM_PROMPT}\n\nRespond with JSON matching this schema:\n{json.dumps(ExtractionResponse.model_json_schema(), indent=2)}"
+                "content": f"""You are an expert entity extraction assistant. Extract company mentions from text.
+For each company mention, return ONLY:
+1. The exact Word found in the text
+2. The single most confident identifier as 'top_identifier', including:
+   - type: The type of identifier (RIC, BBTicker, SEDOL, ISIN, or Symbol)
+   - value: The identifier value
+   - confidence: ONLY "high" or "very_high"
+3. IssueName if available
+
+The response MUST be a valid JSON object with this exact structure:
+{{
+  "companies": [
+    {{
+      "Word": "Example Corp",
+      "top_identifier": {{
+        "type": "RIC",
+        "value": "EXMP.O",
+        "confidence": "very_high"
+      }},
+      "IssueName": {{
+        "type": "IssueName",
+        "value": "Example Corporation",
+        "confidence": "high"
+      }}
+    }}
+  ]
+}}"""
             },
             {
                 "role": "user", 
-                "content": EXTRACTION_HUMAN_PROMPT.format(article_text=article_text)
+                "content": f"Extract company mentions from this text:\n{article_text}"
             }
         ]
         
@@ -164,11 +207,18 @@ def extract_companies_from_text(article_text: str, llm: OpenAI) -> List[dict]:
             response_format={"type": "json_object"}
         )
         
-        parsed_response = ExtractionResponse.model_validate_json(
-            response.choices[0].message.content
-        )
-        companies = parsed_response.companies
-        metrics.companies_found = len(companies)
+        try:
+            content = response.choices[0].message.content
+            logging.debug(f"Raw LLM response: {content}")
+            
+            parsed_response = ExtractionResponse.model_validate_json(content)
+            companies = [company.model_dump() for company in parsed_response.companies]
+            metrics.companies_found = len(companies)
+            
+        except Exception as parse_error:
+            logging.error(f"Failed to parse LLM response: {parse_error}")
+            logging.error(f"Response content: {content}")
+            companies = []
             
     except Exception as e:
         logging.error(f"Error during extraction: {str(e)}")
@@ -178,7 +228,7 @@ def extract_companies_from_text(article_text: str, llm: OpenAI) -> List[dict]:
         metrics.end()
         metrics.log_metrics()
         
-    return [company.model_dump() for company in companies]
+    return companies
 
 def verify_companies_from_text(article: str, company_list: List[dict], llm: OpenAI) -> List[dict]:
     try:
