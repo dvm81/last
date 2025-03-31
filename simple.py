@@ -229,14 +229,31 @@ def verify_companies_from_text(article: str, company_list: List[dict], llm: Open
         messages = [
             {
                 "role": "system", 
-                "content": f"{VERIFICATION_SYSTEM_PROMPT}\n\nRespond with a JSON array matching this schema:\n{json.dumps(VerifiedCompany.model_json_schema(), indent=2)}"
+                "content": f"""You are a highly accurate company name disambiguation assistant.
+The response MUST be a valid JSON object with this exact structure:
+{{
+  "verified_companies": [
+    {{
+      "MasterId": "string",
+      "top_identifier": {{
+        "type": "RIC or BBTicker or SEDOL or ISIN or Symbol",
+        "value": "string",
+        "confidence": "high or very_high"
+      }},
+      "confidence": "high or very_high"
+    }}
+  ]
+}}"""
             },
             {
                 "role": "user", 
-                "content": VERIFICATION_HUMAN_PROMPT.format(
-                    article=article,
-                    company_list=json.dumps(company_list, indent=2)
-                )
+                "content": f"""### Company List:
+{json.dumps(company_list, indent=2)}
+
+**Article:**
+{article}
+
+Match each company found in the article to the best match in the company database list."""
             }
         ]
         
@@ -245,14 +262,20 @@ def verify_companies_from_text(article: str, company_list: List[dict], llm: Open
             messages=messages,
             response_format={"type": "json_object"}
         )
+
+        # Create a wrapper model for the list of verified companies
+        class VerificationResponse(BaseModel):
+            verified_companies: List[VerifiedCompany]
         
-        verified_companies = List[VerifiedCompany].model_validate_json(
+        # Parse the response using the wrapper model
+        parsed_response = VerificationResponse.model_validate_json(
             response.choices[0].message.content
         )
-        return [company.model_dump() for company in verified_companies]
+        return [company.model_dump() for company in parsed_response.verified_companies]
             
     except Exception as e:
         logging.error(f"Error during verification: {str(e)}")
+        logging.error(f"Response content: {response.choices[0].message.content if 'response' in locals() else 'No response'}")
         return []
 
 def process_article(article_text: str, company_database: pd.DataFrame, llm: OpenAI, use_cache: bool = True) -> tuple[List[dict], dict]:
