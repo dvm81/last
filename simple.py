@@ -21,21 +21,17 @@ class ConfidenceLevel(str, Enum):
     VERY_HIGH = "very_high"
 
 class Identifier(BaseModel):
-    value: Optional[str] = None
+    type: str = Field(description="Type of identifier (RIC, BBTicker, SEDOL, ISIN, Symbol)")
+    value: str
     confidence: ConfidenceLevel
 
 class CompanyMention(BaseModel):
     Word: str
-    # Only include the identifiers that were found with confidence
-    identifiers: List[Dict[str, Identifier]] = Field(
-        description="Include only the 2 identifiers with highest confidence (high or very_high). Skip any with none confidence.",
-        max_items=2
-    )
+    top_identifier: Identifier
+    IssueName: Optional[Identifier] = None
 
 class ExtractionResponse(BaseModel):
-    companies: List[CompanyMention] = Field(
-        description="List of company mentions with their identifiers"
-    )
+    companies: List[CompanyMention]
 
 class VerifiedCompany(BaseModel):
     MasterId: str
@@ -109,32 +105,31 @@ Finished: {datetime.fromtimestamp(self.end_time).strftime('%Y-%m-%d %H:%M:%S')}
 
 # Optimized prompt templates
 EXTRACTION_SYSTEM_PROMPT = """You are an expert entity extraction assistant. Extract company mentions from text.
-For each company mention, return ONLY:
-1. The exact Word found in the text
-2. The single most confident identifier as 'top_identifier', including:
-   - type: The type of identifier (RIC, BBTicker, SEDOL, ISIN, or Symbol)
-   - value: The identifier value
-   - confidence: ONLY "high" or "very_high"
-3. IssueName if available
-
-The response MUST be a valid JSON object with this exact structure:
-{{
+For each company mention, you MUST return this EXACT structure:
+{
   "companies": [
-    {{
-      "Word": "Example Corp",
-      "top_identifier": {{
-        "type": "RIC",
-        "value": "EXMP.O",
-        "confidence": "very_high"
-      }},
-      "IssueName": {{
+    {
+      "Word": "string",
+      "top_identifier": {
+        "type": "RIC or BBTicker or SEDOL or ISIN or Symbol",
+        "value": "string",
+        "confidence": "high or very_high"
+      },
+      "IssueName": {
         "type": "IssueName",
-        "value": "Example Corporation",
-        "confidence": "high"
-      }}
-    }}
+        "value": "string",
+        "confidence": "high or very_high"
+      }
+    }
   ]
-}}"""
+}
+
+The response must:
+1. Include the exact Word found in the text
+2. Have a single top_identifier with type, value, and confidence
+3. Optionally include IssueName
+4. Use ONLY "high" or "very_high" for confidence levels
+5. Be a valid JSON object matching this structure exactly"""
 
 EXTRACTION_HUMAN_PROMPT = """Extract company mentions from this text:
 {article_text}"""
@@ -168,32 +163,31 @@ def extract_companies_from_text(article_text: str, llm: OpenAI) -> List[dict]:
             {
                 "role": "system", 
                 "content": f"""You are an expert entity extraction assistant. Extract company mentions from text.
-For each company mention, return ONLY:
-1. The exact Word found in the text
-2. The single most confident identifier as 'top_identifier', including:
-   - type: The type of identifier (RIC, BBTicker, SEDOL, ISIN, or Symbol)
-   - value: The identifier value
-   - confidence: ONLY "high" or "very_high"
-3. IssueName if available
-
-The response MUST be a valid JSON object with this exact structure:
-{{
+For each company mention, you MUST return this EXACT structure:
+{
   "companies": [
-    {{
-      "Word": "Example Corp",
-      "top_identifier": {{
-        "type": "RIC",
-        "value": "EXMP.O",
-        "confidence": "very_high"
-      }},
-      "IssueName": {{
+    {
+      "Word": "string",
+      "top_identifier": {
+        "type": "RIC or BBTicker or SEDOL or ISIN or Symbol",
+        "value": "string",
+        "confidence": "high or very_high"
+      },
+      "IssueName": {
         "type": "IssueName",
-        "value": "Example Corporation",
-        "confidence": "high"
-      }}
-    }}
+        "value": "string",
+        "confidence": "high or very_high"
+      }
+    }
   ]
-}}"""
+}
+
+The response must:
+1. Include the exact Word found in the text
+2. Have a single top_identifier with type, value, and confidence
+3. Optionally include IssueName
+4. Use ONLY "high" or "very_high" for confidence levels
+5. Be a valid JSON object matching this structure exactly"""
             },
             {
                 "role": "user", 
