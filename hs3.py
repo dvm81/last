@@ -1,6 +1,6 @@
-ef hybrid_search(companies, config: SearchConfig = SearchConfig()):
+def hybrid_search(companies, config: SearchConfig = SearchConfig()):
     """
-    Hybrid search implementation that exactly matches the original behavior while optimizing performance.
+    Hybrid search implementation that exactly matches the original behavior.
     
     Args:
         companies: List of company dictionaries to search
