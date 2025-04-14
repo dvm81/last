@@ -1,4 +1,4 @@
-def hybrid_search(companies, config: SearchConfig = SearchConfig()):
+ef hybrid_search(companies, config: SearchConfig = SearchConfig()):
     """
     Hybrid search implementation that exactly matches the original behavior.
     
